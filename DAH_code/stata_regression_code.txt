@@ -1,0 +1,136 @@
+rename urban_population_percent urban_pop_pct
+rename corruption_estimate corr_est
+rename government_effectiveness gov_eff
+rename population_density pop_dens
+rename natural_resource_rent nat_res_rent
+rename population_total pop_tot
+rename debt_percent_gdp debt_gdp
+rename lifetime_risk_of_maternal_death lifetime_risk_md
+rename dalys_i_rate dalys1_rate
+rename dalys_ii_rate dalys2_rate
+rename dalys_iii_rate dalys3_rate
+gen dah_per_tenthous = total_dah_21 / pop_tot*100000
+gen log_dah_per_tenthous = log(dah_per_tenthous)
+gen gdp_per_cap = gdp / pop_tot
+
+
+* 把字符串国家代码转换成数值 ID
+encode recipient_isocode, gen(recipient_id)
+
+* 设置面板结构：国家 × 年份
+xtset recipient_id year
+
+
+gen sample_ok = !missing(log_dah_per_tenthous) & ///
+                !missing(dalys1_rate) & ///
+                !missing(dalys2_rate) & ///
+                !missing(dalys3_rate) & ///
+                !missing(filled_nursing_and_midwifery_fin) & ///
+                !missing(physicians_final) & ///
+                !missing(medical_assistants_chws_final) & ///
+                !missing(hospital_beds_final_imputed) & ///
+                !missing(pharmaceutical_personnel_final) & ///
+                !missing(filled_all_health_workers_final) & ///
+                !missing(gdp_per_cap) & ///
+                !missing(distance_to_us) & ///
+                !missing(tradelevel) & ///
+                !missing(corr_est) & ///
+                !missing(gov_eff) & ///
+                !missing(debt_gdp) & ///
+                !missing(us_president_party_dummy) & ///
+                !missing(scale_of_us_dah)
+
+keep if sample_ok == 1
+
+
+
+
+* LASSO 变量选择
+lasso linear log_dah_per_tenthous ///
+    dalys1_rate dalys2_rate dalys3_rate ///
+    filled_nursing_and_midwifery_fin physicians_final ///
+    medical_assistants_chws_final hospital_beds_final_imputed ///
+    pharmaceutical_personnel_final filled_all_health_workers_final ///
+    gdp_per_cap distance_to_us tradelevel ///
+    corr_est gov_eff debt_gdp us_president_party_dummy scale_of_us_dah
+
+
+mixed log_dah_per_tenthous i.year log_dalys1 log_dalys2 log_dalys3 ///
+      filled_nursing_and_midwifery_fin physicians_final ///
+      medical_assistants_chws_final hospital_beds_final_imputed ///
+      pharmaceutical_personnel_final gdp_per_cap distance_to_us tradelevel ///
+      corr_est gov_eff debt_gdp us_president_party_dummy scale_of_us_dah ///
+      || recipient:, mle
+
+est store full
+
+
+
+
+tab world_bank_income_group
+encode world_bank_income_group, gen(income_group)
+label list income_group
+
+*******低收入
+mixed log_dah_per_tenthous i.year log_dalys1 log_dalys2 log_dalys3 ///
+      filled_nursing_and_midwifery_fin physicians_final ///
+      medical_assistants_chws_final hospital_beds_final_imputed pharmaceutical_personnel_final ///
+      gdp_per_cap distance_to_us tradelevel ///
+      corr_est gov_eff debt_gdp us_president_party_dummy scale_of_us_dah ///
+      if world_bank_income_group == "Low-income countries" || recipient_id:, mle
+	  
+est store LIC
+******中低收入
+mixed log_dah_per_tenthous i.year log_dalys1 log_dalys2 log_dalys3 ///
+      filled_nursing_and_midwifery_fin physicians_final ///
+      medical_assistants_chws_final hospital_beds_final_imputed pharmaceutical_personnel_final ///
+      gdp_per_cap distance_to_us tradelevel ///
+      corr_est gov_eff debt_gdp us_president_party_dummy scale_of_us_dah ///
+      if world_bank_income_group == "Lower-middle-income countries"|| recipient_id:, mle
+est store LMIC
+*******中高收入
+mixed log_dah_per_tenthous i.year log_dalys1 log_dalys2 log_dalys3 ///
+      filled_nursing_and_midwifery_fin physicians_final ///
+      medical_assistants_chws_final hospital_beds_final_imputed pharmaceutical_personnel_final  ///
+      gdp_per_cap distance_to_us tradelevel ///
+      corr_est gov_eff debt_gdp us_president_party_dummy scale_of_us_dah ///
+      if world_bank_income_group == "Upper-middle-income countries"|| recipient_id:, mle
+est store UMIC
+
+*****************************************************************************
+* 输出成 Excel-friendly 格式，仅显示系数+显著性星号，不显示标准误差
+esttab full LIC LMIC UMIC using "mixed_results_cleaned.csv", ///
+    replace label star(* 0.05 ** 0.01 *** 0.001) ///
+    compress b(4) nogap nonumber ///
+    starlevels(* 0.05 ** 0.01 *** 0.001) ///
+    stats(N, fmt(0 1) labels("Observations")) ///
+    mtitles("Full Sample" "LIC" "LMIC" "UMIC")
+
+
+***********分时段回归
+mixed log_dah_per_tenthous i.year log_dalys1 log_dalys2 log_dalys3 ///
+      filled_nursing_and_midwifery_fin physicians_final ///
+      medical_assistants_chws_final hospital_beds_final_imputed pharmaceutical_personnel_final  ///
+      gdp_per_cap distance_to_us tradelevel ///
+      corr_est gov_eff debt_gdp us_president_party_dummy scale_of_us_dah ///
+      if year <= 2015 || recipient_id:, mle
+	  
+estimates store pre2015
+
+
+mixed log_dah_per_tenthous i.year log_dalys1 log_dalys2 log_dalys3 ///
+      filled_nursing_and_midwifery_fin physicians_final ///
+      medical_assistants_chws_final hospital_beds_final_imputed pharmaceutical_personnel_final  ///
+      gdp_per_cap distance_to_us tradelevel ///
+      corr_est gov_eff debt_gdp us_president_party_dummy scale_of_us_dah ///
+      if year >= 2016|| recipient_id:, mle
+estimates store post2016
+	  
+
+esttab full pre2015 post2016 using "split_period_results_cleaned.csv", ///
+    replace label star(* 0.05 ** 0.01 *** 0.001) ///
+    compress b(4) nogap nonumber ///
+    starlevels(* 0.05 ** 0.01 *** 0.001) ///
+    stats(N, fmt(0 1) labels("Observations")) ///
+    mtitles("overall" "Up to 2015" "2016 and After")
+

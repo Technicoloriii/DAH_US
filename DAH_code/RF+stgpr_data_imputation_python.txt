@@ -1,0 +1,251 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF
+from matplotlib.colors import ListedColormap
+
+# === Step 0: Load data ===
+df = pd.read_csv(r"D:\Job\PKUHSC\DAHpaper\raw_data\final_with_physicians_STGPR_fixed.csv")
+
+# === Step 1: Define target and covariates ===
+target_var = "Medical Assistants and CHWs (per 10,000 population,GBD Data)"
+target_final = "medical_assistants_final"
+covariates = [
+    'GDP', 'urban_population_percent', 'population_density', 'HDI',
+    'natural_resource_rent', 'lifetime_risk_of_maternal_death',
+    'children_born_per_woman', 'life_expectancy_at_birth'
+]
+
+# 数据清洗
+for col in [target_var] + covariates:
+    df[col] = pd.to_numeric(df[col], errors='coerce')
+df['year'] = pd.to_numeric(df['year'], errors='coerce')
+df['recipient_isocode'] = df['recipient_isocode'].astype(str)
+
+# === Step 2: RF Prior ===
+rf_data = df[['recipient_isocode', 'year', target_var] + covariates].dropna(subset=covariates).copy()
+train_rf = rf_data[rf_data[target_var].notnull()]
+predict_rf = rf_data.copy()
+
+rf = RandomForestRegressor(n_estimators=100, random_state=42)
+rf.fit(train_rf[covariates], train_rf[target_var])
+predict_rf['rf_prior_meds'] = rf.predict(predict_rf[covariates])
+
+# === Step 3: 合并并计算残差 ===
+df = df.merge(predict_rf[['recipient_isocode', 'year', 'rf_prior_meds']],
+              on=['recipient_isocode', 'year'], how='left')
+df['residual_meds'] = df[target_var] - df['rf_prior_meds']
+
+# === Step 4: 构建空间核 ===
+country_info = df.dropna(subset=['gbd_superregion_id']).drop_duplicates(subset='recipient_isocode')
+country_list = country_info['recipient_isocode'].values
+superregion_map = country_info.set_index('recipient_isocode')['gbd_superregion_id'].to_dict()
+
+n_countries = len(country_list)
+spatial_distance = np.zeros((n_countries, n_countries))
+for i, c1 in enumerate(country_list):
+    for j, c2 in enumerate(country_list):
+        spatial_distance[i, j] = 0 if superregion_map[c1] == superregion_map[c2] else 1
+spatial_kernel = np.exp(-spatial_distance / 1.0)
+
+# === Step 5: ST-GPR 插补 ===
+residual_pool = df[['recipient_isocode', 'year', 'residual_meds']].dropna()
+df[target_final] = np.nan
+fitted_count = 0
+
+for i, target_country in enumerate(country_list):
+    years = df[df['recipient_isocode'] == target_country]['year'].dropna().unique()
+    if len(years) == 0:
+        continue
+
+    kernel_weights = spatial_kernel[i]
+    donor_weights = dict(zip(country_list, kernel_weights))
+
+    weighted_rows = []
+    for donor_country in country_list:
+        weight = donor_weights.get(donor_country, 0)
+        sub = residual_pool[residual_pool['recipient_isocode'] == donor_country].copy()
+        sub['weight'] = weight
+        weighted_rows.append(sub)
+
+    training_data = pd.concat(weighted_rows, ignore_index=True)
+    training_data = training_data[training_data['weight'] > 0]
+    if training_data.shape[0] < 3:
+        continue
+
+    X_train = training_data['year'].values.reshape(-1, 1)
+    y_train = training_data['residual_meds'].values * training_data['weight'].values
+
+    gp = GaussianProcessRegressor(kernel=RBF(length_scale=5), alpha=1e-2, normalize_y=True)
+    try:
+        gp.fit(X_train, y_train)
+    except:
+        continue
+
+    X_pred = df[df['recipient_isocode'] == target_country]['year'].values.reshape(-1, 1)
+    y_pred_resid, _ = gp.predict(X_pred, return_std=True)
+
+    df.loc[df['recipient_isocode'] == target_country, target_final] = \
+        df.loc[df['recipient_isocode'] == target_country, 'rf_prior_meds'].values + y_pred_resid
+
+    fitted_count += 1
+
+# === Step 6: 恢复原始值 ===
+df[target_final] = df[target_final].combine_first(df[target_var])
+
+# === Step 7: 保存结果 ===
+output_path = r"D:\Job\PKUHSC\DAHpaper\raw_data\final_with_medical_assistants_STGPR.csv"
+df.to_csv(output_path, index=False)
+print("✅ 插补完成，保存路径：", output_path)
+print("✅ 成功插补国家数：", fitted_count)
+
+# === Step 8: 可视化来源热图 ===
+def classify_source(row):
+    if not pd.isna(row[target_var]):
+        return 0
+    elif not pd.isna(row[target_final]):
+        return 1
+    else:
+        return 2
+
+df['meds_value_source'] = df.apply(classify_source, axis=1).astype(int)
+pivot_table = df.pivot(index='recipient_isocode', columns='year', values='meds_value_source').fillna(2).astype(int)
+
+cmap = ListedColormap(['#2f586c', '#739a82', '#fee295'])  # 蓝、绿、黄
+plt.figure(figsize=(16, 10))
+plt.imshow(pivot_table, aspect='auto', cmap=cmap, vmin=0, vmax=2)
+plt.title("Medical Assistants and CHWs Value Source\nNavy=Original, Green=Imputed, Yellow=Missing", fontsize=14)
+plt.xlabel("Year")
+plt.ylabel("Country (ISO3)")
+cbar = plt.colorbar(ticks=[0, 1, 2])
+cbar.ax.set_yticklabels(['Original', 'Imputed', 'Missing'])
+cbar.set_label("Value Type")
+plt.xticks(ticks=np.arange(len(pivot_table.columns)), labels=pivot_table.columns, rotation=90)
+plt.tight_layout()
+plt.show()
+
+# === Step 9: 插补前后统计 ===
+original_count = df[target_var].notnull().sum()
+imputed_count = df[target_final].notnull().sum()
+newly_filled = df[(df[target_var].isnull()) & (df[target_final].notnull())].shape[0]
+
+print(f"📊 原始观测值数量：{original_count}")
+print(f"📊 插补后总观测值数量（原始 + 插补）：{imputed_count}")
+print(f"✅ 实际新增插补的观测值数量：{newly_filled}")
+
+# === Step 10: 趋势图（排名30–37国家，插补前 vs 插补后） ===
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF
+
+# ====== 读取数据 ======
+df = pd.read_csv(r"D:\Job\PKUHSC\DAHpaper\raw_data\final_with_medical_assistants_STGPR.csv")
+
+# ====== 设置变量 ======
+value_col = "Medical Assistants and CHWs (per 10,000 population,GBD Data)"
+final_col = "medical_assistants_final"
+
+# ====== 筛选缺失比例第 30–37 的国家 ======
+missing_ratio = df.groupby('recipient_isocode')[value_col].apply(lambda x: x.isna().mean())
+country_list = missing_ratio.sort_values(ascending=False).iloc[30:38].index.tolist()
+country_names = {iso: iso for iso in country_list}  # 如有需要可改为英文全称
+
+# ====== 图像布局 ======
+n = len(country_list)
+cols = 2
+rows = (n + 1) // cols
+fig, axes = plt.subplots(rows, cols, figsize=(12, 4 * rows), sharex=True, sharey=True)
+axes = axes.flatten()
+
+for idx, country in enumerate(country_list):
+    sub = df[df['recipient_isocode'] == country].copy().sort_values("year")
+    ax = axes[idx]
+
+    # ====== 原始观测值（红点） ======
+    ax.scatter(
+        sub['year'], sub[value_col],
+        label='Original', color='#a72a33', s=50, zorder=3
+    )
+
+    if sub[final_col].notna().sum() < 2:
+        ax.set_title(f"{country_names[country]} (insufficient data)")
+        continue
+
+    # ====== GPR 拟合插补趋势和置信区间 ======
+    X = sub['year'].values.reshape(-1, 1)
+    y = sub[final_col].values
+    valid_idx = ~np.isnan(y)
+    X_valid = X[valid_idx]
+    y_valid = y[valid_idx]
+
+    gp = GaussianProcessRegressor(kernel=RBF(length_scale=5), alpha=1e-2, normalize_y=True)
+    gp.fit(X_valid, y_valid)
+
+    y_pred, y_std = gp.predict(X, return_std=True)
+    ci_upper = y_pred + 1.96 * y_std
+    ci_lower = y_pred - 1.96 * y_std
+
+    ax.plot(sub['year'], y_pred, color='#739a82', label='Imputed', linewidth=2)
+    ax.fill_between(sub['year'], ci_lower, ci_upper, color='#739a82', alpha=0.2, label='95% CI')
+
+    ax.set_title(country_names[country])
+    ax.grid(True)
+
+    # 美化年份轴
+    years = sorted(sub['year'].dropna().unique())
+    ax.set_xticks(years)
+    ax.set_xticklabels([str(int(y)) for y in years], rotation=45)
+
+# ====== 清空多余子图格子 ======
+for ax in axes[n:]:
+    ax.axis('off')
+
+# ====== 添加标题、坐标轴和图例 ======
+fig.suptitle("Medical Assistants and CHWs: Trends with 95% CI", fontsize=16)
+fig.text(0.5, 0.04, 'Year', ha='center')
+fig.text(0.05, 0.5, 'Personnel per 10,000', va='center', rotation='vertical')
+
+handles, labels = axes[0].get_legend_handles_labels()
+fig.legend(handles, labels, loc='lower center', ncol=3)
+plt.tight_layout(rect=[0.05, 0.05, 1, 0.95])
+plt.show()
+
+
+# === Step 11: 信度评估：真实值是否落入预测置信区间 ===
+
+# 只保留有真实值和插补值的观测
+check_df = df[df[value_col].notna() & df[final_col].notna()].copy()
+
+# 初始化统计量
+covered = 0
+total = 0
+
+for iso in check_df['recipient_isocode'].unique():
+    sub = check_df[check_df['recipient_isocode'] == iso].copy()
+    if sub.shape[0] < 3:
+        continue
+
+    X = sub['year'].values.reshape(-1, 1)
+    y_true = sub[value_col].values
+    y_pred = sub[final_col].values
+
+    gp = GaussianProcessRegressor(kernel=RBF(length_scale=5), alpha=1e-2, normalize_y=True)
+    try:
+        gp.fit(X, y_pred)
+        pred_mean, pred_std = gp.predict(X, return_std=True)
+        ci_lower = pred_mean - 1.96 * pred_std
+        ci_upper = pred_mean + 1.96 * pred_std
+
+        is_covered = (y_true >= ci_lower) & (y_true <= ci_upper)
+        covered += np.sum(is_covered)
+        total += len(is_covered)
+    except:
+        continue
+
+# 输出整体准确率
+coverage_rate = covered / total if total > 0 else np.nan
+print(f"\n✅ Predictive accuracy (true values within 95% CI): {coverage_rate:.2%} ({covered} out of {total})")
