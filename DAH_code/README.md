@@ -26,7 +26,7 @@ Analytical steps include:
    The file `data_imputation_rf_stgpr.txt` contains the Python code used to implement a two-stage imputation strategy, filling in missing values for health workforce and infrastructure variables.
 
 2. **Regression code**  
-   The file `regression_models.txt` contains Stata code for estimating both fixed effects and mixed effects models, as used in the main analysis and supplementary robustness checks.
+   The file `stata_regression_code.txt` contains Stata code for estimating both fixed effects and mixed effects models, as used in the main analysis and supplementary robustness checks.
 
 3. **Dataset**  
    The cleaned and imputed dataset used in the study is saved as: US_DAH_merged_file.csv
