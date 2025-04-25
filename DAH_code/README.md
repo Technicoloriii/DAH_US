@@ -23,7 +23,7 @@ Analytical steps include:
 ## 💻 How to Use
 
 1. **Imputation code**  
-   The file `data_imputation_rf_stgpr.txt` contains the Python code used to implement a two-stage imputation strategy, filling in missing values for health workforce and infrastructure variables.
+   The file `RF+stgpr_data_imputation_python.txt` contains the Python code used to implement a two-stage imputation strategy, filling in missing values for health workforce and infrastructure variables.
 
 2. **Regression code**  
    The file `stata_regression_code.txt` contains Stata code for estimating both fixed effects and mixed effects models, as used in the main analysis and supplementary robustness checks.
