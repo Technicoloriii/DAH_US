@@ -4,52 +4,54 @@
 
 ## 📘 Overview
 
-This repository contains the core analysis code and supporting materials for the article entitled:  
+This repository contains the core code and documentation supporting the article titled:  
 **"Allocation and Drivers of Development Assistance for Health from the United States, 2000–2020"**
 
-The study investigates how U.S. development assistance for health (DAH) was influenced by recipient need, donor interest, and recipient merit, using panel data from 2000 to 2020.  
+The study investigates the key factors shaping the allocation of U.S. development assistance for health (DAH) between 2000 and 2020, using original data from IHME, World Bank, WHO, and other public sources.  
 
-The methods include:
-- **Two-stage data imputation** using **Random Forest + Spatiotemporal Gaussian Process Regression (ST-GPR)** in Python
-- **Mixed effects regression analysis** using Stata
+Analytical steps include:
+- **Two-stage data imputation** using a combination of Random Forest and Spatiotemporal Gaussian Process Regression (ST-GPR)
+- **Mixed effects and fixed effects regression modeling** on panel data
 
 ---
 
 ## 📂 Repository Structure
 
+
 ---
 
 ## 💻 How to Use
 
-1. **Data imputation in Python**  
-   Navigate to the `python_code/` folder and run `data_imputation_rf_stgpr.py`. This script performs two-stage imputation and generates cleaned variables for use in regression.
+1. **Imputation code**  
+   The file `data_imputation_rf_stgpr.txt` contains the Python code used to implement a two-stage imputation strategy, filling in missing values for health workforce and infrastructure variables.
 
-2. **Regression analysis in Stata**  
-   Open the `regression_models.do` file in Stata. It runs the mixed effects model and fixed effects model, and outputs regression tables used in the manuscript (Table 1 and 2, Supplementary Tables S5–S6).
+2. **Regression code**  
+   The file `regression_models.txt` contains Stata code for estimating both fixed effects and mixed effects models, as used in the main analysis and supplementary robustness checks.
 
 3. **Dataset**  
-   The cleaned and imputed dataset is located at:
+   The cleaned and imputed dataset used in the study is saved as: US_DAH_merged_file.csv
 
+   
 ---
 
-## 📑 Notes
+## 📝 Notes
 
-- All source data were obtained from publicly available repositories (IHME, World Bank, WHO, UN Voting Database).
-- Variables included in the final dataset cover DAH, DALYs, GDP, health workforce, diplomatic distance, trade level, governance metrics, etc.
-- Imputation was only applied to variables with missingness, using a conservative approach that preserves original values when available.
+- Data used in this study were publicly available and obtained from international organizations including IHME, World Bank, WHO, and the United Nations.
+- All code is documented in `.txt` format for clarity and reproducibility.
+- Imputation was only performed where missingness exceeded acceptable thresholds and was based on observed covariates with strong predictive performance.
 
 ---
 
 ## 📬 Contact
 
-For questions or feedback, please contact:  
-**Yan Hao** – [yjh5219@outlook.com](mailto:yjh5219@outlook.com)
+For questions or collaboration, please contact:  
+**Yan Hao** – [yanhao_ii@hsc.pku.edu.cn](mailto:yanhao_ii@hsc.pku.edu.cn)
 
 ---
 
 ## 📄 License
 
-This code is released under the MIT License.  
-Please cite the associated article when using any part of this repository.
+This repository is distributed under the MIT License.  
+Please cite the article if you make use of this code or dataset.
 
 
